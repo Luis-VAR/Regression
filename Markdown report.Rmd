@@ -1,0 +1,99 @@
+---
+title: "Report, Regression"
+author: "Luis Varela"
+date: "25 10 2019"
+output: html_document
+---
+
+<div style="margin-bottom:100px;">
+</div>
+
+<h2 style="text-align: center;">Introduction</h2>
+
+<p style="text-align: justify;">On this report, profitability of (a) certain article(s) will be demonstrated. The df for the task consists of 80 observations, from a df of existing products and 24 of a list of possible candidates.</p>
+
+<div style="margin-bottom:100px;">
+</div>
+
+<h2 style="text-align: center;">Used Libraries</h2>
+
+
+```{r results='asis', warning=FALSE, message=FALSE}
+library(ggplot2)
+library(ggthemes)
+library(caret)
+library(mlbench)
+library(dplyr)
+library(reshape2)
+library(knitr)
+```
+
+
+```{r setup, include=FALSE}
+existing <- read.csv("Data/existing.csv")
+new <- read.csv("Data/new.csv")
+
+#taking a look at the variables
+kable(glimpse(existing))
+kable(glimpse(new))
+```
+
+
+```{r include=FALSE}
+#creating dummy vars to explore correlation
+tempdf <- dummyVars(" ~ .", data = existing)
+existingCor <- data.frame(predict(tempdf, newdata = existing))
+
+#check for missing data
+summary(existingCor)
+
+#since BestSellersRank has, it´ll be excluded, instead of exclusing 15 rows in the, already small, df
+existingCor$BestSellersRank <- NULL
+
+#correlation matrix to understand the relationship between the features
+cor <- round(cor(existingCor), 4)
+
+#visualiing the correlation structures
+ggcorrplot::ggcorrplot(cor, method = "circle", type = "lower") #5*reviews and Volume are perfectly cor. gotta watch out
+
+#Check outliers
+plot(existing$Volume)
+
+#Cleaning outliers
+existing <- filter(existing, 
+                   existing$Volume < 7000)
+plot(existing$Volume)
+```
+
+
+```{r}
+#select features to be used on the models based on correlation
+set.seed(99)
+
+#df subseting
+sub_existing <- existing %>% select(c("Volume",
+                                      "x4StarReviews",
+                                      "x3StarReviews",
+                                      "x2StarReviews",
+                                      "PositiveServiceReview",
+                                      "NegativeServiceReview"))
+
+#Normalise/scale attributes except the dependent feature
+sub_existing[,c(2:6)] <- lapply(sub_existing[,c(2:5)] , scale)
+
+str(sub_existing)
+
+#Splitting data into training set and testing set for cross validation
+indexing <- createDataPartition(sub_existing$Volume, p = .75, list = FALSE)
+training <- sub_existing[indexing,]
+testing <- sub_existing[-indexing,]
+
+#filtering test set to include only netbook products
+testingLimited <- testing %>% 
+  dplyr::filter(testing$ProductType.Netbook > 1)
+
+#loading r files (to minimize the rmd file size)
+read_chunk("")
+read_chunk('Parameter.R')
+```
+

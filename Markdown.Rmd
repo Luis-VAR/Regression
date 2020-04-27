@@ -1,0 +1,268 @@
+---
+title: "Report, Regression"
+author: "Luis Varela"
+date: "25 10 2019"
+output: html_document
+---
+
+<div style="margin-bottom:100px;">
+</div>
+
+<h2 style="text-align: center;">Introduction</h2>
+
+<p style="text-align: justify;">On this report, profitability of (a) certain article(s) will be demonstrated. The df for the task consists of 80 observations, from a df of existing products and 24 of a list of possible candidates.</p>
+
+<div style="margin-bottom:100px;">
+</div>
+
+<h2 style="text-align: center;">Used Libraries</h2>
+
+
+```{r results='asis', warning=FALSE, message=FALSE}
+library(ggplot2)
+library(ggthemes)
+library(caret)
+library(mlbench)
+library(dplyr)
+library(reshape2)
+library(knitr)
+library(kableExtra)
+```
+
+
+<div style="margin-bottom:100px;">
+</div>
+
+<h2 style="text-align: center;">Data</h2>
+
+
+```{r results='asis', fig.align='center', out.extra='angle=90', message=FALSE}
+existing <- read.csv("Data/existing.csv")
+new <- read.csv("Data/new.csv")
+
+#taking a look at the variables
+kable(head(existing, n = 10), booktabs = TRUE) %>% 
+  kable_styling() %>% 
+  scroll_box(width = "100%", height = "100%")
+
+kable(head(new, n = 10), booktabs = TRUE) %>% 
+  kable_styling(latex_options = "scale_down") %>% 
+  scroll_box(width = "100%", height = "100%")
+```
+
+
+<div style="margin-bottom:100px;">
+</div>
+
+<h2 style="text-align: center;">First Analysis</h2>
+
+
+```{r results='asis', fig.align='center', out.extra='angle=90'}
+#creating dummy vars to explore correlation
+tempdf <- dummyVars(" ~ .", data = existing)
+existingCor <- data.frame(predict(tempdf, newdata = existing))
+
+#check for missing data
+kable(summary(existingCor)) %>% 
+  kable_styling() %>%
+  column_spec(column = 2:30, width_min = "4cm") %>% 
+  scroll_box(width = "100%", height = "100%")
+
+#since BestSellersRank has, it´ll be excluded, instead of exclusing 15 rows in the, already small, df
+existingCor$BestSellersRank <- NULL
+
+#correlation matrix to understand the relationship between the features
+cor <- round(cor(existingCor), 4)
+
+#visualiing the correlation structures
+ggcorrplot::ggcorrplot(cor, method = "circle", type = "lower", lab = TRUE, lab_size = 1, lab_col = "black", pch = TRUE) #5*reviews and Volume are perfectly cor. gotta watch out
+
+#Check outliers
+plot(existing$Volume)
+
+#Cleaning outliers
+existing <- filter(existing, existing$Volume < 7000)
+plot(existing$Volume)
+```
+
+
+<div style="margin-bottom:100px;">
+</div>
+
+<h2 style="text-align: center;">Feature Selection</h2>
+
+
+```{r results='asis', fig.align='center', out.extra='angle=90'}
+#select features to be used on the models based on correlation
+set.seed(99)
+
+#df subseting
+sub_existing <- existing %>% select(c("Volume",
+                                      "x4StarReviews",
+                                      "x3StarReviews",
+                                      "x2StarReviews",
+                                      "PositiveServiceReview",
+                                      "NegativeServiceReview"))
+
+sub_new <- new %>% select(c("Volume",
+                            "x4StarReviews",
+                            "x3StarReviews",
+                            "x2StarReviews",
+                            "PositiveServiceReview",
+                            "NegativeServiceReview"))
+
+#Normalise/scale attributes except the dependent feature
+sub_existing[,c(2:6)] <- lapply(sub_existing[,c(2:6)] , scale)
+
+sub_new[,c(2:6)] <- lapply(sub_new[,c(2:6)] , scale)
+
+#again the extra mile for a nice table
+data.frame(
+  variable = names(sub_existing),
+  classe = sapply(sub_existing, typeof),
+  first_values = sapply(round(sub_existing, digits = 2), function(x) paste0(head(x), collapse = ", ")),
+  row.names = NULL) %>%
+  kable(caption = "Data Structure sub_existing") %>% 
+  kable_styling()
+
+#Splitting data into training set and testing set for cross validation
+indexing <- createDataPartition(sub_existing$Volume, p = .75, list = FALSE)
+training <- sub_existing[indexing,]
+testing <- sub_existing[-indexing,]
+```
+
+
+<div style="margin-bottom:100px;">
+</div>
+
+<h2 style="text-align: center;">Models</h2>
+
+
+```{r results='asis', fig.align='center', out.extra='angle=90'}
+#######################   RANDOM FOREST   ###########################
+
+
+RFcontrol <- trainControl(method = "repeatedcv",               
+                          number = 10, 
+                          repeats = 4, 
+                          search="random")
+
+#rfGrid <- expand.grid(mtry=c(9,10,11,12,13))
+
+set.seed(33)
+
+#random forest model
+RFmodel <- train(Volume~., 
+                 data = training, 
+                 method = "rf",
+                 trControl=RFcontrol, 
+                 #tuneGrid=rfGrid, 
+                 #classProbs = TRUE,
+                 tuneLength=11, 
+                 importance=T)
+
+#view model
+kable(RFmodel$results) %>% 
+  kable_styling()
+
+
+#variable importance
+VarImpRF <- varImp(RFmodel)
+kable(VarImpRF$importance) %>% 
+  kable_styling()
+
+#prediction
+predRF <- predict(RFmodel, newdata = testing)
+
+#summary(pred)
+postResample(predRF, testing$Volume) %>% 
+  kable() %>% 
+  kable_styling()
+
+
+############################   k-NN   ###############################
+
+
+KNNcontrol <- trainControl(method = "repeatedcv", 
+                           number = 10, 
+                           repeats = 3,
+                           classProbs = TRUE)
+
+set.seed(832)
+
+#KNN model
+KNNmodel <- train(Volume ~., 
+                  data = training, 
+                  method = "knn",
+                  knnControl=KNNcontrol,
+                  tuneGrid = expand.grid(k = c(1:20)),
+                  tuneLength = 10,
+                  importance = T)
+
+#view results
+kable(KNNmodel$results) %>% 
+  kable_styling()
+
+predKNN <- predict(KNNmodel, newdata = testing)
+
+#variable importance
+varImpKNN <- varImp(KNNmodel)
+kable(varImpKNN$importance) %>% 
+  kable_styling()
+
+#summary KNN predictions
+postResample(predKNN, testing$Volume) %>% 
+  kable() %>% 
+  kable_styling()
+
+
+############################   SVM   ################################
+
+
+SVMcontrol <- trainControl(method = "repeatedcv", 
+                           number = 10, 
+                           repeats = 3,
+                           search="random")
+
+SVMgrid <- expand.grid(C = c(1,5,10,18,50))
+
+set.seed(150)
+
+SVMmodel <- train(Volume ~., 
+                  data = training, 
+                  method = "svmLinear",
+                  trControl=SVMcontrol,
+                  tuneGrid = SVMgrid)
+
+#view results
+kable(SVMmodel$results) %>% 
+  kable_styling()
+
+predSVM <- predict(SVMmodel, newdata = testing)
+
+#variable importance
+varImpSVM <- varImp(SVMmodel)
+kable(varImpSVM$importance) %>% 
+  kable_styling()
+
+#summary SVM
+postResample(predSVM, testing$Volume) %>% 
+  kable() %>% 
+  kable_styling()
+
+#Best model turned out ot be RF, ready to make the predictions on the new df
+Projection <- predict(RFmodel, sub_new)
+
+#the products from which there was an intention to decide form were: Laptop, Netbook, PC, Smartphone, therefore the next table to isolate them
+Results <-
+  mutate(filter(cbind(new, Projection), 
+                ProductType %in% c("PC", "Netbook", "Laptop", "Smartphone")),
+                Profit = round(Price * ProfitMargin * Projection))
+
+Results[, c("ProductType", "ProductNum", "Price", "ProfitMargin", "Projection", "Profit")] %>% 
+  kable() %>% 
+  kable_styling()
+
+write.csv(Results, file = "Profit_Margins")
+```
+
